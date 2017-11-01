@@ -1,0 +1,118 @@
+/********************************************************
+Home convector heater control
+ ********************************************************/
+
+#include <PID_v1.h>
+#include <math.h>
+#include "MegunoLink.h"
+#include "Filter.h"
+
+
+#define RELAY_PIN 6
+
+#define NTCPin 1
+#define PotPin 0
+
+#define RLed 2
+#define GLed 3
+#define BLed 4
+
+
+//Define Variables we'll be connecting to
+double Setpoint, Input, Output;
+
+//Specify the links and initial tuning parameters
+double Kp = 4, Ki = 1, Kd = 2;
+PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
+
+int WindowSize = 100;
+unsigned long windowStartTime;
+
+
+// Create a new exponential filter with a weight of 10 and initial value of 0.
+ExponentialFilter<long> ADCFilter(10, 0);
+
+void setup()
+{
+  windowStartTime = millis();
+
+  pinMode(RLed, OUTPUT);
+  pinMode(BLed, OUTPUT);
+  pinMode(GLed, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+
+
+  //tell the PID to range between 0 and the full window size
+  myPID.SetOutputLimits(0, WindowSize);
+
+  //turn the PID on
+  myPID.SetMode(AUTOMATIC);
+
+    while (!Serial);                   // wait until serial ready
+  Serial.begin(9600);                // start serial
+  Serial.println("Home heater PID control"); // only for examples
+}
+
+void loop()
+{
+  int RawADC;
+  int FiltTemp;
+  RawADC = analogRead(NTCPin);
+  double Temp;
+  Temp = log(10000.0 * ((1024.0 / RawADC - 1)));
+  Temp = 1 / (0.001129148 + (0.000234125 + (0.0000000876741 * Temp * Temp )) * Temp );
+  FiltTemp = Temp - 273.15;
+  ADCFilter.Filter(FiltTemp);
+
+  Input = FiltTemp;
+
+  int set = analogRead(PotPin);
+  set = map(set, 0, 1023, 14, 33);
+
+  if (FiltTemp - set >= 2) {
+    digitalWrite(RLed, HIGH);
+      Serial.print(RLed);
+    Serial.print("RLed  ");
+  }
+
+  if (FiltTemp - set == 1 || set - FiltTemp == 1 || set - FiltTemp == 0) {
+    digitalWrite(GLed, HIGH);
+      Serial.print(GLed);
+    Serial.print("GLed  ");
+  }
+
+  if (set - FiltTemp >= 2) {
+    digitalWrite(BLed, HIGH);
+      Serial.print(BLed);
+    Serial.print("BLed  ");
+
+  }
+
+  //initialize the variables we're linked to
+  Setpoint = set;
+
+  Serial.print(set);
+    Serial.println("°C  ");
+
+  Serial.print(FiltTemp);
+    Serial.print("°C  ");
+
+  Serial.print(Output);
+    Serial.print("    ");
+    
+   
+    
+
+  myPID.Compute();
+
+  /************************************************
+     turn the output pin on/off based on pid output
+   ************************************************/
+  if (millis() - windowStartTime > WindowSize)
+  { //time to shift the Relay Window
+    windowStartTime += WindowSize;
+  }
+  if (Output < millis() - windowStartTime) digitalWrite(RELAY_PIN, LOW);
+  else digitalWrite(RELAY_PIN, HIGH);
+
+}
